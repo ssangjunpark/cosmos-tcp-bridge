@@ -1,0 +1,5 @@
+numpy==2.4.6
+msgpack==1.2.3
+websockets==17.3
+Pillow==13.0.0
+pyzed @ https://download.stereolabs.com/zedsdk/5.5/whl/linux_x86_64/pyzed-5.5-cp311-cp311-linux_x86_64.whl
