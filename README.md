@@ -2,7 +2,8 @@
 
 One bridge script plus a small `cameras.py` capture helper. The model stays in
 the existing official Cosmos Framework server. No dependency on the larger
-bridge project, RoboLab, or Isaac. Local capture uses the official ZED SDK.
+bridge project, RoboLab, or Isaac. Local RGB capture uses Linux UVC/V4L2 and
+OpenCV factory rectification. The SDK is used only to enumerate camera serials.
 `bridge.py` runs on the **5090 machine only**. The standalone `nuc_executor.py`
 runs on the **NUC**, using its existing DROID controller APIs without changing
 `robot.py`, `server_interface.py`, or the controller.
@@ -115,8 +116,9 @@ NUC; this project does not replace it. The NUC does not need to send images.
 convention. The prompt comes from the bridge command line. Immediately after
 this state arrives, the bridge captures fresh local ZED images and packs RGB
 uint8 `[540,640,3]`: wrist `[360,640]` on top, external-left and external-right
-`[180,320]` below. Grabs run concurrently, discard frames older than the capture
-request, and keep no observation queue. The cameras are not hardware synchronized.
+`[180,320]` below. UVC reads run concurrently, drain driver frames older than the
+capture request, and keep no observation queue. Accepted frames must be at most
+250 ms old and no more than 150 ms apart. The cameras are not hardware synchronized.
 
 The NUC may continuously send observation messages. The bridge always drains
 the connection in a small background reader. During inference and chunk
@@ -184,12 +186,21 @@ compatibility with the official Cosmos server. See `LICENSE`.
 
 Default roles are wrist Mini **12583732**, external-left 2i **33625030**, and
 external-right 2i **36860439**. Override with
-`--camera-serials WRIST_SERIAL LEFT_SERIAL RIGHT_SERIAL`. The left optical image
-from each camera is rectified by the SDK. Depth and required motion sensors are
-disabled; capture uses VGA at 15 FPS so the USB 2 connection fits its bandwidth.
+`--camera-serials WRIST_SERIAL LEFT_SERIAL RIGHT_SERIAL`. `bridge.py` uses
+`cameras.ZedCameras`, whose default capture path is now UVC/V4L2. The local
+`uvc_capture.py` contains the restored driver and factory calibration code;
+there are no imports from the older bridge project or RoboLab.
+
+The SDK enumerates serial-to-video-device mappings without opening its camera
+or MCU/HID interface. Frames are read through accessible `/dev/video*` nodes.
+Only the left optical image is used, with Mini fisheye or 2i radial/tangential
+factory rectification. USB 3 cameras use 1280x720 per eye at 30 FPS; the USB 2
+2i negotiates 672x376 at 15 FPS. This camera rate is separate from action timing.
 
 The SDK at `~/.local/opt/zed-sdk-5.5.1-cu13` is loaded automatically. Set `ZED_DIR`
-for a different SDK directory and `ZED_SETTINGS_PATH` for factory calibration.
+for a different SDK directory and `ZED_SETTINGS_PATH` for the existing factory
+calibration files. Install the updated requirements in this project's own
+environment to add `opencv-python-headless` (no GUI preview is needed).
 Test cameras without contacting either the policy server or NUC:
 
 ```bash
@@ -197,10 +208,15 @@ Test cameras without contacting either the policy server or NUC:
 .venv/bin/python cameras.py --output outputs/zed_capture.png
 ```
 
-Linux must grant this user access to the video/USB devices. SDK enumeration
-alone does not verify that images can be captured.
+The same commands now use UVC by default. Capture writes the PNG and a matching
+JSON sidecar containing camera serials, negotiated modes and driver capture
+timestamps. All three cameras must open successfully. Each capture drains old
+frames and waits for new exposures after that capture request. UVC capture needs
+read/write access to the video devices, but does not require MCU/HID access.
+SDK enumeration alone does not verify that images can be captured.
 
-For this remote session, an administrator can grant access over SSH:
+If video-device permissions are also missing, an administrator can grant access
+over SSH using the existing helper (it also covers ZED USB/HID nodes):
 
 ```bash
 sudo python3 /home/sangjunpark/Documents/cosmos-tcp-bridge/setup/grant_zed_access.py --user sangjunpark
@@ -235,6 +251,10 @@ model, together with the bridge protocol tests:
 ```bash
 .venv/bin/python -m unittest discover -s dummy_robolab -p 'test_*.py' -v
 ```
+
+`test_uvc_cameras.py` checks role packing, old-frame rejection, fresh exposures
+on successive requests, capture deadlines/skew, driver timestamps and cleanup
+after a partial open. The SDK camera-open path is explicitly forbidden in that test.
 
 `test_nuc_executor.py` checks the actual executor over loopback TCP, a two-chunk
 bridge cycle, fresh measured feedback, wall-clock dispatch timing, gripper

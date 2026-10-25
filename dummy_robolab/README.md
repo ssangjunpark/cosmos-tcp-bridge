@@ -50,4 +50,4 @@ per-step measured states, and `simulator/rollout.mp4`.
 
 Simulation uses 15 Hz in simulation time and pauses physics during inference.
 It does not validate real USB access, physical controller behavior, or network
-timing. The normal bridge still uses the real ZED SDK when launched directly.
+timing. The normal bridge uses the real local UVC cameras when launched directly.
